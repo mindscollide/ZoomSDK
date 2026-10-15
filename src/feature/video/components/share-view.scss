@@ -1,0 +1,39 @@
+.share-view {
+  display: none;
+  &.share-view-in-sharing {
+    display: flex;
+    flex-grow: 1;
+    justify-content: center;
+    align-items: center;
+    overflow: hidden;
+    border-right: 1px solid #333;
+  }
+  &.share-view-original {
+    display: block;
+  }
+  .share-view-viewport {
+    max-width: 100%;
+    &.share-view-viewport-original {
+      max-width: initial;
+      cursor: move;
+    }
+    &.share-view-viewport-in-control{
+      cursor: default;
+    }
+    position: relative;
+    .share-view-player-container {
+      display: block;
+      position: relative;
+      width: 100%;
+      height: 100%;
+    }
+    .share-view-player {
+      display: block;
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+    }
+  }
+}
