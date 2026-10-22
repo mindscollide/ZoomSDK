@@ -7,6 +7,21 @@ import App from "./App";
 import reportWebVitals from "./reportWebVitals";
 import ZoomContext from "./context/zoom-context";
 import { b64DecodeUnicode } from "./utils/util";
+import { logVideoError } from "./utils/video-log";
+
+// Catch-all for errors nothing else handles, e.g. SDK promises that aren't
+// awaited (leave, recording) rejecting.
+window.addEventListener("error", (event) => {
+  logVideoError("Uncaught", event.message || "uncaught error", event.error);
+});
+window.addEventListener("unhandledrejection", (event) => {
+  const reason: any = event.reason;
+  logVideoError(
+    "Unhandled",
+    `unhandled promise rejection: ${reason?.reason || reason?.message || reason?.type || String(reason)}`,
+    reason
+  );
+});
 
 const getMeetingArgs = () => {
   let args: any = Object.fromEntries(new URLSearchParams(location.search));
@@ -82,7 +97,7 @@ const fetchAuthApi = async (
     });
 
     if (!response.ok) {
-      throw new Error(`HTTP error! Status: ${response.status}`);
+      throw new Error(`HTTP error! Status: ${response.status} from ${authEndpoint}`);
     }
 
     const data = await response.json();
@@ -97,10 +112,16 @@ const fetchAuthApi = async (
       };
     } else {
       console.error(`API Error: ${data.responseMessage}`);
+      logVideoError(
+        "Auth",
+        `GenerateVideoSdkJwt returned no token: responseCode ${data.responseCode}, ${data.responseMessage ?? ""}`,
+        { sessionKey, userGuid, response: data }
+      );
       return null;
     }
   } catch (error) {
     console.error("Failed to fetch auth API:", error);
+    logVideoError("Auth", "GenerateVideoSdkJwt request failed", { sessionKey, userGuid, error });
     return null;
   }
 };
@@ -115,6 +136,14 @@ const initializeMeetingArgs = async (args: any) => {
     if (authConfig) {
       return { ...args, ...authConfig };
     }
+  } else if (!args.topic || !args.signature) {
+    // Diskus always sends these three; without them join() can't succeed.
+    logVideoError("Start", "iframe URL is missing sessionKey, userGuid or userName", {
+      sessionKey,
+      userGuid,
+      userName,
+      url: window.location.href,
+    });
   }
 
   return args;

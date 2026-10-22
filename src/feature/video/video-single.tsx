@@ -13,7 +13,10 @@ import { useParticipantsChange } from './hooks/useParticipantsChange';
 import type { Participant } from '../../index-types';
 import { useNetworkQuality } from './hooks/useNetworkQuality';
 import { useAvatarAction } from './hooks/useAvatarAction';
+import { logVideoError } from '../../utils/video-log';
 import './video.scss';
+
+const HIDE_SDK_FOOTER = process.env.REACT_APP_HIDE_SDK_FOOTER === 'true';
 
 // Renders video with attachVideo into <video-player> elements. The SDK (2.5+)
 // rejects the old canvas-based renderVideo with errorCode 6112 ("Use the
@@ -60,7 +63,9 @@ const VideoContainer: React.FunctionComponent<RouteComponentProps> = (_props) =>
     if (!mediaStream || !activeVideoUserId || !element) {
       return undefined;
     }
-    mediaStream.attachVideo(activeVideoUserId, VideoQuality.Video_720P, element).catch(() => {});
+    mediaStream
+      .attachVideo(activeVideoUserId, VideoQuality.Video_720P, element)
+      .catch((e: unknown) => logVideoError('Render', `attachVideo failed for active user ${activeVideoUserId}`, e));
     return () => {
       try {
         mediaStream.detachVideo(activeVideoUserId, element).catch(() => {});
@@ -76,7 +81,9 @@ const VideoContainer: React.FunctionComponent<RouteComponentProps> = (_props) =>
     if (!mediaStream || !selfUserId || !isCurrentUserStartedVideo || !element) {
       return undefined;
     }
-    mediaStream.attachVideo(selfUserId, VideoQuality.Video_720P, element).catch(() => {});
+    mediaStream
+      .attachVideo(selfUserId, VideoQuality.Video_720P, element)
+      .catch((e: unknown) => logVideoError('Render', 'attachVideo failed for self view', e));
     return () => {
       try {
         mediaStream.detachVideo(selfUserId, element).catch(() => {});
@@ -88,7 +95,10 @@ const VideoContainer: React.FunctionComponent<RouteComponentProps> = (_props) =>
 
   const avatarActionState = useAvatarAction(zmClient, activeUser ? [activeUser] : []);
   return (
-    <div className="viewport">
+    // UAT/production builds hide the footer (Diskus provides the controls). It
+    // stays mounted because it also handles Diskus's mic/camera/share/leave
+    // postMessages; see REACT_APP_HIDE_SDK_FOOTER in package.json.
+    <div className={classnames('viewport', { 'viewport-no-footer': HIDE_SDK_FOOTER })}>
       <ShareView ref={shareViewRef} onRecieveSharingChange={setIsRecieveSharing} />
       <div
         className={classnames('video-container', 'single-video-container', {

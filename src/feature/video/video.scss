@@ -165,7 +165,14 @@
     position: absolute;
     left: 0;
     bottom: 0;
-    // display: none !important;
+  }
+  // Footer hidden (UAT/production): hide it without unmounting, and give back
+  // the bottom space reserved for it so the video sits evenly.
+  &.viewport-no-footer {
+    padding-bottom: 5vh;
+    .video-operations {
+      display: none !important;
+    }
   }
   .avatar-wrap {
     position: absolute;

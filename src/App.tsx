@@ -16,7 +16,7 @@ import ZoomVideo, {
   ConnectionState,
   ReconnectReason
 } from '@zoom/videosdk';
-import { message, Modal } from 'antd';
+import { Button, message, Modal, Result } from 'antd';
 import 'antd/dist/antd.min.css';
 import produce from 'immer';
 import Home from './feature/home/home';
@@ -27,6 +27,7 @@ import Preview from './feature/preview/preview';
 import ZoomContext from './context/zoom-context';
 import ZoomMediaContext from './context/media-context';
 import LoadingLayer from './component/loading-layer';
+import { logVideoError } from './utils/video-log';
 import Chat from './feature/chat/chat';
 import Command from './feature/command/command';
 import Subsession from './feature/subsession/subsession';
@@ -98,6 +99,11 @@ const mediaReducer = produce((draft, action) => {
   }
 }, mediaShape);
 
+// Generous limits: the first load downloads several MB of SDK files, and a
+// false timeout would abandon a join that was about to succeed.
+const SDK_INIT_TIMEOUT_MS = 90000;
+const SDK_JOIN_TIMEOUT_MS = 60000;
+
 declare global {
   interface Window {
     webEndpoint: string | undefined;
@@ -138,6 +144,8 @@ function App(props: AppProps) {
   const [mediaState, dispatch] = useReducer(mediaReducer, mediaShape);
   const [mediaStream, setMediaStream] = useState<MediaStream | null>(null);
   const [isSupportGalleryView, setIsSupportGalleryView] = useState<boolean>(false);
+  // Set when the SDK fails to load or join; replaces the loader with a Retry screen.
+  const [startError, setStartError] = useState<string>('');
   const zmClient = useContext(ZoomContext);
   let webEndpoint: any;
   if (webEndpointArg) {
@@ -164,31 +172,51 @@ function App(props: AppProps) {
     });
   }
   useEffect(() => {
+    let cancelled = false;
+    const timers: ReturnType<typeof setTimeout>[] = [];
+    // Rejects if `promise` hasn't settled within `ms`, so a hung SDK step shows
+    // an error instead of an endless loader.
+    const withTimeout = <T,>(promise: Promise<T>, ms: number, step: string) =>
+      Promise.race([
+        promise,
+        new Promise<never>((_, reject) => {
+          timers.push(setTimeout(() => reject({ reason: `${step} timed out` }), ms));
+        })
+      ]);
     const init = async () => {
-      await zmClient.init('en-US', `${window.location.origin}/lib`, {
-        webEndpoint,
-        enforceMultipleVideos: galleryViewWithoutSAB,
-        enforceVirtualBackground: vbWithoutSAB,
-        stayAwake: true,
-        patchJsMedia: true,
-        leaveOnPageUnload: true,
-      });
       try {
+        setLoadingText('Loading video...');
+        // Versioned path: see scripts/zoom-sdk-lib.js.
+        await withTimeout(
+          zmClient.init('en-US', `${window.location.origin}/lib/${process.env.REACT_APP_ZOOM_SDK_VERSION}`, {
+            webEndpoint,
+            enforceMultipleVideos: galleryViewWithoutSAB,
+            enforceVirtualBackground: vbWithoutSAB,
+            stayAwake: true,
+            patchJsMedia: true,
+            leaveOnPageUnload: true,
+          }),
+          SDK_INIT_TIMEOUT_MS,
+          'Loading video'
+        );
+        if (cancelled) return;
         setLoadingText('Joining the session...');
-        await zmClient.join(topic, signature, name, password).catch((e) => {
-          console.log(e);
-        });
+        await withTimeout(zmClient.join(topic, signature, name, password), SDK_JOIN_TIMEOUT_MS, 'Joining the session');
+        if (cancelled) return;
         const stream = zmClient.getMediaStream();
         setMediaStream(stream);
         setIsSupportGalleryView(stream.isSupportMultipleVideos());
         setIsLoading(false);
       } catch (e: any) {
-        setIsLoading(false);
-        message.error(e.reason);
+        if (cancelled) return;
+        logVideoError('Start', `SDK init/join failed: ${e?.reason || e?.message || 'unknown'}`, e);
+        setStartError(e?.reason || e?.message || 'Could not start the video.');
       }
     };
     init();
     return () => {
+      cancelled = true;
+      timers.forEach(clearTimeout);
       if (zmClient.getSessionInfo()?.isInMeeting) {
         ZoomVideo.destroyClient();
       }
@@ -213,6 +241,9 @@ function App(props: AppProps) {
         setIsFailover(true);
         setStatus('connecting');
         const { reason, subsessionName } = payload;
+        if (reason === ReconnectReason.Failover) {
+          logVideoError('Connection', 'connection lost, reconnecting', payload);
+        }
         if (reason === ReconnectReason.Failover) {
           setLoadingText('Session Disconnected,Try to reconnect');
         } else if (reason === ReconnectReason.JoinSubsession || reason === ReconnectReason.MoveToSubsession) {
@@ -247,6 +278,7 @@ function App(props: AppProps) {
         setStatus('closed');
         dispatch({ type: 'reset-media' });
         if (payload.state === ConnectionState.Fail) {
+          logVideoError('Connection', `session connection failed: ${payload.reason ?? 'no reason given'}`, payload);
           Modal.error({
             title: 'Join meeting failed',
             content: `Join meeting failed. reason:${payload.reason ?? ''}`
@@ -264,7 +296,18 @@ function App(props: AppProps) {
   );
   const onMediaSDKChange = useCallback((payload: any) => {
     const { action, type, result } = payload;
+    if (result === 'fail') {
+      logVideoError('Media', `${type} ${action} worker failed to start`, payload);
+    }
     dispatch({ type: `${type}-${action}`, payload: result === 'success' });
+  }, []);
+  const onDevicePermissionChange = useCallback((payload: any) => {
+    if (payload?.state === 'denied') {
+      logVideoError('Permission', `${payload.name} permission denied`, payload);
+    }
+  }, []);
+  const onAutoPlayAudioFailed = useCallback(() => {
+    logVideoError('Media', 'browser blocked audio autoplay (user must click to hear audio)');
   }, []);
 
   const onLeaveOrJoinSession = useCallback(async () => {
@@ -281,17 +324,36 @@ function App(props: AppProps) {
   useEffect(() => {
     zmClient.on('connection-change', onConnectionChange);
     zmClient.on('media-sdk-change', onMediaSDKChange);
+    zmClient.on('device-permission-change', onDevicePermissionChange);
+    zmClient.on('auto-play-audio-failed', onAutoPlayAudioFailed);
     return () => {
       zmClient.off('connection-change', onConnectionChange);
       zmClient.off('media-sdk-change', onMediaSDKChange);
+      zmClient.off('device-permission-change', onDevicePermissionChange);
+      zmClient.off('auto-play-audio-failed', onAutoPlayAudioFailed);
     };
-  }, [zmClient, onConnectionChange, onMediaSDKChange]);
+  }, [zmClient, onConnectionChange, onMediaSDKChange, onDevicePermissionChange, onAutoPlayAudioFailed]);
   console.log({ isSupportGalleryView, galleryViewWithAttach });
 
   return (
     <div className="App">
-      {loading && <LoadingLayer content={loadingText} />}
-      {!loading && (
+      {startError && (
+        <div className="loading-layer start-error">
+          <Result
+            status="error"
+            title="Video could not start"
+            subTitle={startError}
+            extra={
+              // A reload starts the SDK from scratch, which a second init() on the same client would not.
+              <Button type="primary" onClick={() => window.location.reload()}>
+                Retry
+              </Button>
+            }
+          />
+        </div>
+      )}
+      {!startError && loading && <LoadingLayer content={loadingText} />}
+      {!startError && !loading && (
         <ZoomMediaContext.Provider value={mediaContext}>
           <Router>
             <Switch>

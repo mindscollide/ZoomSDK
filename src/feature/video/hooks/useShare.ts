@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect, MutableRefObject } from 'react';
 import type { VideoPlayer } from '@zoom/videosdk';
 import { ZoomClient, MediaStream, Participant } from '../../../index-types';
+import { logVideoError } from '../../../utils/video-log';
 export function useShare(
   zmClient: ZoomClient,
   mediaStream: MediaStream | null,
@@ -70,10 +71,7 @@ export function useShare(
       301: 'SharingStreamFailed'
     };
     const code = payload?.code;
-    console.warn(
-      `[ZoomSDK] active-media-failed code=${code} (${codeNames[code] ?? 'unknown'}) (popup suppressed)`,
-      payload
-    );
+    logVideoError('Media', `active-media-failed code=${code} (${codeNames[code] ?? 'unknown'}) (popup suppressed)`, payload);
   }, []);
   useEffect(() => {
     zmClient.on('active-share-change', onActiveShareChange);
@@ -108,7 +106,9 @@ export function useShare(
     if (!mediaStream || !isRecieveSharing || !activeSharingId || !element) {
       return undefined;
     }
-    mediaStream.attachShareView(activeSharingId, element).catch(() => {});
+    mediaStream
+      .attachShareView(activeSharingId, element)
+      .catch((e: unknown) => logVideoError('Render', `attachShareView failed for sharer ${activeSharingId}`, e));
     return () => {
       try {
         mediaStream.detachShareView(activeSharingId, element).catch(() => {});

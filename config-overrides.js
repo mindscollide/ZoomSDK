@@ -1,6 +1,12 @@
 const { override, addWebpackPlugin, overrideDevServer } = require('customize-cra');
-const path = require('path');
 const CopyPlugin = require('copy-webpack-plugin');
+const { getSdkVersion, sdkLibSource, getPublicLibDir } = require('./scripts/zoom-sdk-lib');
+
+// App.tsx loads the SDK media files from /lib/<this version>/. Set here, before
+// CRA builds its client environment, so the app and the copied folder always
+// agree on the version.
+process.env.REACT_APP_ZOOM_SDK_VERSION = getSdkVersion();
+
 const addDevServerCOOPReponseHeader = (config) => {
   config.headers = {
     ...config.headers,
@@ -20,8 +26,10 @@ module.exports = {
       new CopyPlugin({
         patterns: [
           {
-            from: path.resolve(__dirname, 'node_modules', '@zoom', 'videosdk', 'dist', 'lib'),
-            to: path.resolve(__dirname, 'public', 'lib')
+            from: sdkLibSource,
+            to: getPublicLibDir(),
+            // "2.5.0" looks like a file extension, so say explicitly it's a folder.
+            toType: 'dir'
           }
         ]
       })

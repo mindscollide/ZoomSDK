@@ -12,6 +12,7 @@ import { useUnmount, useMount } from "../../../hooks";
 import type { MediaDevice } from "../video-types";
 import "./video-footer.scss";
 import { isAndroidOrIOSBrowser } from "../../../utils/platform";
+import { logVideoError } from "../../../utils/video-log";
 import {
   getPhoneCallStatusDescription,
   SELF_VIDEO_ID,
@@ -175,11 +176,13 @@ const VideoFooter = (props: VideoFooterProps) => {
           // Removed virtual background configuration
           mediaStream.startVideo(startVideoOptions).catch((err) => {
             console.error("Failed to start video:", err);
+            logVideoError("Camera", "startVideo failed (camera on from Diskus)", err);
           });
           setIsStartedVideo(true);
         } else if (event.data === "VidOn") {
           mediaStream.stopVideo().catch((err) => {
             console.error("Failed to stop video:", err);
+            logVideoError("Camera", "stopVideo failed (camera off from Diskus)", err);
           });
           setIsStartedVideo(false);
         } else if (event.data === "MicOn") {
@@ -313,6 +316,7 @@ const VideoFooter = (props: VideoFooterProps) => {
       const errorMessage =
         (err as { reason?: string }).reason || "Unknown error";
       console.log("handlePostMessage", errorMessage);
+      logVideoError("ScreenShare", `start/stop share failed: ${errorMessage}`, err);
       mediaStream?.stopShareScreen();
       window.parent.postMessage("ScreenSharedStopMsgFromIframe", "*");
     }
@@ -322,12 +326,17 @@ const VideoFooter = (props: VideoFooterProps) => {
     if (!mediaStream) {
       return;
     }
-    if (flag2) {
-      console.log("handlePostMessage");
-      await mediaStream?.unmuteAudio();
-    } else {
-      console.log("handlePostMessage");
-      await mediaStream?.muteAudio();
+    try {
+      if (flag2) {
+        console.log("handlePostMessage");
+        await mediaStream?.unmuteAudio();
+      } else {
+        console.log("handlePostMessage");
+        await mediaStream?.muteAudio();
+      }
+    } catch (e: any) {
+      // Callers don't await this, so without the catch the failure is only an unhandled rejection.
+      logVideoError("Microphone", `${flag2 ? "unmuteAudio" : "muteAudio"} failed (mic command from Diskus)`, e);
     }
   };
 
@@ -362,11 +371,13 @@ const VideoFooter = (props: VideoFooterProps) => {
       // Removed virtual background configuration
       mediaStream.startVideo(startVideoOptions).catch((err) => {
         console.log("MediaStream Failed to start video:", err);
+        logVideoError("Camera", "startVideo failed (initial camera state)", err);
       });
       setIsStartedVideo(true);
     } else if (videoParam === "true") {
       mediaStream.stopVideo().catch((err) => {
         console.log("MediaStream Failed to stop video:", err);
+        logVideoError("Camera", "stopVideo failed (initial camera state)", err);
       });
       setIsStartedVideo(false);
     }
@@ -433,6 +444,7 @@ const VideoFooter = (props: VideoFooterProps) => {
       }
     } catch (err) {
       console.error("Error accessing microphone:", err);
+      logVideoError("Microphone", "microphone access check failed", err);
     }
   }
 
@@ -484,6 +496,7 @@ const VideoFooter = (props: VideoFooterProps) => {
         setIsMicrophoneForbidden(true);
       }
       console.warn(e);
+      logVideoError("Microphone", `startAudio failed: ${e?.reason || e?.type || "unknown"}`, e);
     }
   }, [mediaStream, activePlaybackUrl]);
 
@@ -581,6 +594,7 @@ const VideoFooter = (props: VideoFooterProps) => {
                 setIsSecondaryAudioStarted(true);
               } catch (e) {
                 console.warn(e);
+                logVideoError("Microphone", "startSecondaryAudio failed", e);
               }
             },
           });
@@ -823,6 +837,7 @@ const VideoFooter = (props: VideoFooterProps) => {
       const errorMessage =
         (err as { reason?: string }).reason || "Unknown error";
       console.log("Recording error:", errorMessage);
+      logVideoError("Recording", `recording command failed: ${errorMessage}`, err);
     }
   }, []);
 

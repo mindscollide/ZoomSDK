@@ -11,6 +11,7 @@ import { SharePrivilege } from "@zoom/videosdk";
 import { getAntdDropdownMenu, getAntdItem } from "./video-footer-utils";
 import { useEffect, useRef, useState } from "react";
 import { isAllowedParentOrigin } from "../../../utils/parent-origin";
+import { logVideoError } from "../../../utils/video-log";
 
 const { Button: DropdownButton } = Dropdown;
 interface ScreenShareButtonProps {
@@ -72,6 +73,7 @@ const ScreenShareButton = (props: ScreenShareButtonProps) => {
       onScreenShareClick();
     } catch (error) {
       console.error("Screen share failed:", error);
+      logVideoError("ScreenShare", "share button click failed", error);
     }
   };
 
